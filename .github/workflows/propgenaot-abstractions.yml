@@ -1,0 +1,43 @@
+name: PropGenAoT.Abstractions
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/PropGenAoT.Abstractions/**'
+      - '.github/workflows/abstractions.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/PropGenAoT.Abstractions/**'
+  release:
+    types: [published]
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Restore dependencies
+      run: dotnet restore src/PropGenAoT.Abstractions
+
+    - name: Build
+      run: dotnet build src/PropGenAoT.Abstractions --no-restore -c Release
+
+    - name: Pack
+      if: github.event_name == 'release'
+      run: dotnet pack src/PropGenAoT.Abstractions -c Release --no-build -o nupkg
+
+    - name: Push to NuGet
+      if: github.event_name == 'release'
+      run: dotnet nuget push "nupkg/*.nupkg" --api-key ${{secrets.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json
