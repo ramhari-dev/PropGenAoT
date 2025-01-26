@@ -20,31 +20,32 @@ public class JsonSerializerContextGenerator : IIncrementalGenerator
     /// <param name="context"></param>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Get all classes that implement IDto
-        var dtoClassDeclarations = context.SyntaxProvider
+        // Get all classes and records that implement IDto
+        var dtoTypeDeclarations = context.SyntaxProvider
             .CreateSyntaxProvider(
                 predicate: static (s, _) => IsSyntaxTargetForGeneration(s),
                 transform: static (ctx, _) => GetSemanticTargetForGeneration(ctx))
             .Where(static m => m is not null);
 
         // Combine with compilation
-        var compilation = context.CompilationProvider.Combine(dtoClassDeclarations.Collect());
+        var compilation = context.CompilationProvider.Combine(dtoTypeDeclarations.Collect());
 
         // Generate the source
         context.RegisterSourceOutput(compilation,
-            static (spc, source) => Execute(source.Left, source.Right.Cast<ClassDeclarationSyntax>().ToImmutableArray(), spc));
+            static (spc, source) => Execute(source.Left, source.Right, spc));
     }
 
     private static bool IsSyntaxTargetForGeneration(SyntaxNode node)
     {
-        return node is ClassDeclarationSyntax { BaseList: not null };
+        return node is TypeDeclarationSyntax { BaseList: not null } typeDecl &&
+               (typeDecl is ClassDeclarationSyntax || typeDecl is RecordDeclarationSyntax);
     }
 
-    private static ClassDeclarationSyntax? GetSemanticTargetForGeneration(GeneratorSyntaxContext context)
+    private static TypeDeclarationSyntax? GetSemanticTargetForGeneration(GeneratorSyntaxContext context)
     {
-        var classDeclaration = (ClassDeclarationSyntax)context.Node;
+        var typeDeclaration = (TypeDeclarationSyntax)context.Node;
         
-        foreach (var baseType in classDeclaration.BaseList?.Types ?? default)
+        foreach (var baseType in typeDeclaration.BaseList?.Types ?? default)
         {
             var typeInfo = context.SemanticModel.GetTypeInfo(baseType.Type);
             var typeSymbol = typeInfo.Type;
@@ -57,21 +58,22 @@ public class JsonSerializerContextGenerator : IIncrementalGenerator
 
             if (containingNamespace == "PropGenAoT.Abstractions" && typeName == "IDto")
             {
-                return classDeclaration;
+                return typeDeclaration;
             }
         }
 
         return null;
     }
 
-    private static void Execute(Compilation compilation, ImmutableArray<ClassDeclarationSyntax> classes, SourceProductionContext context)
+    private static void Execute(Compilation compilation, ImmutableArray<TypeDeclarationSyntax?> types, SourceProductionContext context)
     {
-        if (classes.IsDefaultOrEmpty)
+        if (types.IsDefaultOrEmpty)
             return;
 
-        var distinctClasses = classes.Distinct().ToList();
+        var distinctTypes = types.Distinct().ToList();
         
         var sourceBuilder = new StringBuilder();
+        sourceBuilder.AppendLine("using System.Text.Json;");
         sourceBuilder.AppendLine("using System.Text.Json.Serialization;");
         sourceBuilder.AppendLine();
         
@@ -85,29 +87,41 @@ public class JsonSerializerContextGenerator : IIncrementalGenerator
         sourceBuilder.AppendLine("[JsonSourceGenerationOptions(WriteIndented = true)]");
         
         // Generate JsonSerializable attributes for each DTO type
-        foreach (var classDeclaration in distinctClasses)
+        foreach (var typeDeclaration in distinctTypes)
         {
-            var classSymbol = compilation.GetSemanticModel(classDeclaration.SyntaxTree)
-                .GetDeclaredSymbol(classDeclaration);
+            if (typeDeclaration == null)
+                continue;
+                
+            var typeSymbol = compilation.GetSemanticModel(typeDeclaration.SyntaxTree)
+                .GetDeclaredSymbol(typeDeclaration);
             
-            if (classSymbol == null)
+            if (typeSymbol == null)
                 continue;
 
-            var fullTypeName = classSymbol.ToDisplayString();
+            var fullTypeName = typeSymbol.ToDisplayString();
             sourceBuilder.AppendLine($"[JsonSerializable(typeof({fullTypeName}))]");
             sourceBuilder.AppendLine($"[JsonSerializable(typeof({fullTypeName}[]))]");
+            sourceBuilder.AppendLine($"[JsonSerializable(typeof(System.Collections.Generic.List<{fullTypeName}>))]");
+            sourceBuilder.AppendLine($"[JsonSerializable(typeof(System.Collections.Generic.IEnumerable<{fullTypeName}>))]");
         }
 
         sourceBuilder.AppendLine("internal partial class PropGenJsonContext : JsonSerializerContext");
         sourceBuilder.AppendLine("{");
+        sourceBuilder.AppendLine("    public PropGenJsonContext(JsonSerializerOptions? options = null)");
+        sourceBuilder.AppendLine("        : base(options ?? new JsonSerializerOptions");
+        sourceBuilder.AppendLine("        {");
+        sourceBuilder.AppendLine("            WriteIndented = true,");
+        sourceBuilder.AppendLine("            PropertyNameCaseInsensitive = true");
+        sourceBuilder.AppendLine("        })");
+        sourceBuilder.AppendLine("    {");
+        sourceBuilder.AppendLine("    }");
         sourceBuilder.AppendLine("}");
 
-        context.AddSource("AppJsonSerializerContext.g.cs", SourceText.From(sourceBuilder.ToString(), Encoding.UTF8));
+        context.AddSource("PropGenJsonContext.g.cs", SourceText.From(sourceBuilder.ToString(), Encoding.UTF8));
     }
 
     private static string GetCompilationNamespace(Compilation compilation)
     {
-        // Try to get the default namespace from the compilation
         return compilation.AssemblyName ?? string.Empty;
     }
 }
