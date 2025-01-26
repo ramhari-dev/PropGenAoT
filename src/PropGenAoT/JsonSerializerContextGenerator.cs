@@ -101,20 +101,10 @@ public class JsonSerializerContextGenerator : IIncrementalGenerator
             var fullTypeName = typeSymbol.ToDisplayString();
             sourceBuilder.AppendLine($"[JsonSerializable(typeof({fullTypeName}))]");
             sourceBuilder.AppendLine($"[JsonSerializable(typeof({fullTypeName}[]))]");
-            sourceBuilder.AppendLine($"[JsonSerializable(typeof(System.Collections.Generic.List<{fullTypeName}>))]");
-            sourceBuilder.AppendLine($"[JsonSerializable(typeof(System.Collections.Generic.IEnumerable<{fullTypeName}>))]");
         }
 
         sourceBuilder.AppendLine("internal partial class PropGenJsonContext : JsonSerializerContext");
         sourceBuilder.AppendLine("{");
-        sourceBuilder.AppendLine("    public PropGenJsonContext(JsonSerializerOptions? options = null)");
-        sourceBuilder.AppendLine("        : base(options ?? new JsonSerializerOptions");
-        sourceBuilder.AppendLine("        {");
-        sourceBuilder.AppendLine("            WriteIndented = true,");
-        sourceBuilder.AppendLine("            PropertyNameCaseInsensitive = true");
-        sourceBuilder.AppendLine("        })");
-        sourceBuilder.AppendLine("    {");
-        sourceBuilder.AppendLine("    }");
         sourceBuilder.AppendLine("}");
 
         context.AddSource("PropGenJsonContext.g.cs", SourceText.From(sourceBuilder.ToString(), Encoding.UTF8));
